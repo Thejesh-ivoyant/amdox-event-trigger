@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "Amdox_EventTrigger": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7074"
+    },
+    "Docker": {
+      "commandName": "Docker",
+      "launchUrl": "{Scheme}://{ServiceHost}:{ServicePort}",
+      "httpPort": 30871,
+      "useSSL": false
+    }
+  }
+}
