@@ -16,7 +16,7 @@ namespace Amdox_EventTrigger
         {
             var exceptions = new List<Exception>();
 
-            foreach (EventData eventData in event
+            foreach (EventData eventData in events)
             {
                 try
                 {
