@@ -6,6 +6,7 @@ using System.Net.Http.Json;
 using System.Text;
 using System.Threading.Tasks;
 using Azure.Messaging.EventHubs;
+using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Azure.Amqp.Framing;
 using Microsoft.Azure.WebJobs;
 using Microsoft.Extensions.Logging;
@@ -14,9 +15,48 @@ using Newtonsoft.Json;
 namespace Amdox_EventTrigger
 {
    
-    public static class GetUpdateEvents
+    public  class GetUpdateEvents
     {
-        static string url = "https://localhost:7042/uploadUserData";
+        static string url = "https://localhost:7042/uploadUserORToAR";
+
+        public static async Task PostEvent(string jsonResponse)
+        {
+            var keyValuePairs = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonResponse);
+
+            EventHubProducerClient producerClient = null;
+
+            try
+            {
+                producerClient = new EventHubProducerClient("Endpoint=sb://amdocs-b2b.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=9jt/gAfCNaubzyAXQ/d0WMq2KNXLwhJpn+AEhHsewzk=", "amdox-event-statushub");
+
+                List<EventData> eventDataList = new List<EventData>();
+
+                foreach (var kvp in keyValuePairs)
+                {
+                   string jsonKeyValuePair = JsonConvert.SerializeObject(kvp);
+
+                    // Convert the JSON string to bytes
+                    byte[] eventDataBytes = Encoding.UTF8.GetBytes(jsonKeyValuePair);
+
+                    // Create EventData with binary data
+                    Azure.Messaging.EventHubs.EventData eventData = new Azure.Messaging.EventHubs.EventData(eventDataBytes);
+
+                    eventDataList.Add(eventData);
+                }
+
+                await producerClient.SendAsync(eventDataList);
+
+
+                Console.WriteLine($"Successfully sent {keyValuePairs.Count} events to Event Hub.");
+                await producerClient.DisposeAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending events: {ex.Message}");
+                // Log the error for further investigation and potential retries
+            }
+           
+        }
 
         [FunctionName("GetUpdateEvents")]
         public static async Task Run([EventHubTrigger("amdox-eventhub", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
@@ -49,18 +89,24 @@ namespace Amdox_EventTrigger
             {
                 try
                 {
-                    var json = JsonConvert.SerializeObject(userList);
-                    var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                    var response = await httpClient.PostAsync(url, content);
-
-                    if (response.IsSuccessStatusCode)
+                    foreach (var user in userList)
                     {
-                        Console.WriteLine("JSON data uploaded successfully.");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"Error uploading JSON data. Status code: {response.StatusCode}");
+                        var json = JsonConvert.SerializeObject(user);
+                        var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                        var response = await httpClient.PostAsync(url, content);
+
+                        if (response.IsSuccessStatusCode)
+                        {
+                            Console.WriteLine($"User data for {user.UserGuid} uploaded successfully.");
+                            var jsonResponse = await response.Content.ReadAsStringAsync();
+
+                            await PostEvent(jsonResponse);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"Error uploading user data for {user.UserGuid}. Status code: {response.StatusCode}");
+                        }
                     }
                 }
                 catch (Exception e)
