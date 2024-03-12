@@ -70,14 +70,16 @@ namespace Amdox_EventTrigger
 
             using (var httpClient = new HttpClient())
             {
-                try
+                foreach (var user in userList)
                 {
-                    var tasks = userList.Select(user => ProcessUserAsync(httpClient, user, url)).ToList();
-                    await Task.WhenAll(tasks);
-                }
-                catch (Exception e)
-                {
-                    exceptions.Add(e);
+                    try
+                    {
+                        await ProcessUserAsync(httpClient, user, url);
+                    }
+                    catch (Exception e)
+                    {
+                        exceptions.Add(e);
+                    }
                 }
             }
 
@@ -117,6 +119,4 @@ namespace Amdox_EventTrigger
             }
         }
     }
-
-  
 }
