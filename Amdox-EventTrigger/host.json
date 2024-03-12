@@ -1,12 +1,23 @@
 {
-    "version": "2.0",
-    "logging": {
-        "applicationInsights": {
-            "samplingSettings": {
-                "isEnabled": true,
-                "excludedTypes": "Request"
-            },
-            "enableLiveMetricsFilters": true
-        }
+  "version": "2.0",
+  "extensions": {
+    "eventHubs": {
+      "batchCheckpointFrequency": 1,
+      "eventProcessorOptions": {
+        "maxBatchSize": 10,
+        "prefetchCount": 100
+      }
+    },
+    "serviceBus": {
+      "messageHandlerOptions": {
+        "maxConcurrentCalls": 15
+      }
     }
+  },
+  "functionTimeout": "00:05:00",
+  "logging": {
+    "logLevel": {
+      "default": "Information"
+    }
+  }
 }
