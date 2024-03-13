@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -16,7 +15,10 @@ namespace Amdox_EventTrigger
 {
     public class GetUpdateEvents
     {
-        static IConfigurationRoot Configuration { get; }
+        static readonly HttpClient _httpClient = new HttpClient();
+        static readonly ILogger _logger;
+
+        static IConfigurationRoot _configuration;
 
         static GetUpdateEvents()
         {
@@ -24,47 +26,47 @@ namespace Amdox_EventTrigger
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("local.settings.json", optional: true, reloadOnChange: true);
 
-            Configuration = builder.Build();
+            _configuration = builder.Build();
         }
 
-        public static async Task PostEvent(string jsonResponse)
+        public static async Task PostEventAsync(string jsonResponse)
         {
-            var keyValuePairs = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonResponse);
-
-            EventHubProducerClient producerClient = null;
-
             try
             {
-                producerClient = new EventHubProducerClient(Configuration["ReplyEventConnectionString"], Configuration["ReplyEventHubName"]);
+                var keyValuePairs = JsonConvert.DeserializeObject<Dictionary<string, string>>(jsonResponse);
 
-                List<EventData> eventDataList = new List<EventData>();
-
-                foreach (var kvp in keyValuePairs)
+                await using (var producerClient = new EventHubProducerClient(_configuration["ReplyEventConnectionString"], _configuration["ReplyEventHubName"]))
                 {
-                    string jsonKeyValuePair = JsonConvert.SerializeObject(kvp);
-                    byte[] eventDataBytes = Encoding.UTF8.GetBytes(jsonKeyValuePair);
-                    Azure.Messaging.EventHubs.EventData eventData = new Azure.Messaging.EventHubs.EventData(eventDataBytes);
-                    eventDataList.Add(eventData);
-                }
+                    var eventDataList = new List<EventData>();
 
-                await producerClient.SendAsync(eventDataList);
-                Console.WriteLine($"Successfully sent Reply events to Event Hub.\n");
-                await producerClient.DisposeAsync();
+                    foreach (var kvp in keyValuePairs)
+                    {
+                        string jsonKeyValuePair = JsonConvert.SerializeObject(kvp);
+                        byte[] eventDataBytes = Encoding.UTF8.GetBytes(jsonKeyValuePair);
+                        var eventData = new EventData(eventDataBytes);
+                        eventDataList.Add(eventData);
+                    }
+
+                    await producerClient.SendAsync(eventDataList);
+                    Console.WriteLine($"Successfully sent Reply events to Event Hub.\n");
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error sending events in Post event function: {ex.Message}");
-                // Log the error for further investigation and potential retries
+                _logger.LogError($"Error sending Reply events to Event Hub: {ex.Message}");
+                // Optionally, you can rethrow the exception if needed
+                // throw;
             }
         }
 
+
         [FunctionName("GetUpdateEvents")]
-        public static async Task Run([EventHubTrigger("RequestEventHubName", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
+        public static async Task RunAsync([EventHubTrigger("RequestEventHubName", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
         {
             var exceptions = new List<Exception>();
             var userList = new List<User>();
 
-            foreach (EventData eventData in events)
+            foreach (var eventData in events)
             {
                 try
                 {
@@ -79,18 +81,15 @@ namespace Amdox_EventTrigger
                 }
             }
 
-            using (var httpClient = new HttpClient())
+            foreach (var user in userList)
             {
-                foreach (var user in userList)
+                try
                 {
-                    try
-                    {
-                        await ProcessUserAsync(httpClient, user);
-                    }
-                    catch (Exception e)
-                    {
-                        exceptions.Add(e);
-                    }
+                    await ProcessUserAsync(user, log);
+                }
+                catch (Exception e)
+                {
+                    exceptions.Add(e);
                 }
             }
 
@@ -101,24 +100,25 @@ namespace Amdox_EventTrigger
 
             if (exceptions.Count == 1)
             {
-                throw exceptions.Single();
+                throw exceptions[0];
             }
         }
 
-        public static async Task ProcessUserAsync(HttpClient httpClient, User user)
+        public static async Task ProcessUserAsync(User user, ILogger log)
         {
             try
             {
-                string apiUrl = Configuration["ApiUrl"];
+                string apiUrl = _configuration["ApiUrl"];
                 var json = JsonConvert.SerializeObject(user);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var response = await httpClient.PostAsync(apiUrl, content);
+
+                var response = await _httpClient.PostAsync(apiUrl, content);
 
                 if (response.IsSuccessStatusCode)
                 {
                     Console.WriteLine($"User data for {user.UserGuid} Updated successfully To AR database.\n");
                     var jsonResponse = await response.Content.ReadAsStringAsync();
-                    await PostEvent(jsonResponse);
+                    await PostEventAsync(jsonResponse);
                 }
                 else
                 {
