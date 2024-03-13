@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -7,6 +8,7 @@ using System.Threading.Tasks;
 using Azure.Messaging.EventHubs;
 using Azure.Messaging.EventHubs.Producer;
 using Microsoft.Azure.WebJobs;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 
@@ -14,7 +16,16 @@ namespace Amdox_EventTrigger
 {
     public class GetUpdateEvents
     {
-        static string url = "https://localhost:7042/uploadUserORToAR";
+        static IConfigurationRoot Configuration { get; }
+
+        static GetUpdateEvents()
+        {
+            var builder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("local.settings.json", optional: true, reloadOnChange: true);
+
+            Configuration = builder.Build();
+        }
 
         public static async Task PostEvent(string jsonResponse)
         {
@@ -24,7 +35,7 @@ namespace Amdox_EventTrigger
 
             try
             {
-                producerClient = new EventHubProducerClient("Endpoint=sb://amdocs-b2b.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=9jt/gAfCNaubzyAXQ/d0WMq2KNXLwhJpn+AEhHsewzk=", "amdox-event-statushub");
+                producerClient = new EventHubProducerClient(Configuration["ReplyEventConnectionString"], Configuration["ReplyEventHubName"]);
 
                 List<EventData> eventDataList = new List<EventData>();
 
@@ -48,7 +59,7 @@ namespace Amdox_EventTrigger
         }
 
         [FunctionName("GetUpdateEvents")]
-        public static async Task Run([EventHubTrigger("amdox-eventhub", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
+        public static async Task Run([EventHubTrigger("RequestEventHubName", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
         {
             var exceptions = new List<Exception>();
             var userList = new List<User>();
@@ -74,7 +85,7 @@ namespace Amdox_EventTrigger
                 {
                     try
                     {
-                        await ProcessUserAsync(httpClient, user, url);
+                        await ProcessUserAsync(httpClient, user);
                     }
                     catch (Exception e)
                     {
@@ -94,13 +105,14 @@ namespace Amdox_EventTrigger
             }
         }
 
-        public static async Task ProcessUserAsync(HttpClient httpClient, User user, string url)
+        public static async Task ProcessUserAsync(HttpClient httpClient, User user)
         {
             try
             {
+                string apiUrl = Configuration["ApiUrl"];
                 var json = JsonConvert.SerializeObject(user);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
-                var response = await httpClient.PostAsync(url, content);
+                var response = await httpClient.PostAsync(apiUrl, content);
 
                 if (response.IsSuccessStatusCode)
                 {
