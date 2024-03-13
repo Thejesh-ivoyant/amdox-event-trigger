@@ -16,20 +16,15 @@ namespace Amdox_EventTrigger
     public class GetUpdateEvents
     {
         static readonly HttpClient _httpClient = new HttpClient();
-        static readonly ILogger _logger;
+        private readonly IConfiguration _configuration;
 
-        static IConfigurationRoot _configuration;
-
-        static GetUpdateEvents()
+        public GetUpdateEvents(IConfiguration configuration)
         {
-            var builder = new ConfigurationBuilder()
-                .SetBasePath(Directory.GetCurrentDirectory())
-                .AddJsonFile("local.settings.json", optional: true, reloadOnChange: true);
-
-            _configuration = builder.Build();
+            _configuration = configuration;
         }
 
-        public static async Task PostEventAsync(string jsonResponse)
+
+        public  async Task PostEventAsync(string jsonResponse, ILogger log)
         {
             try
             {
@@ -48,63 +43,70 @@ namespace Amdox_EventTrigger
                     }
 
                     await producerClient.SendAsync(eventDataList);
-                    Console.WriteLine($"Successfully sent Reply events to Event Hub.\n");
+                    log.LogInformation($"Successfully sent Reply events to Event Hub.");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"Error sending Reply events to Event Hub: {ex.Message}");
-                // Optionally, you can rethrow the exception if needed
-                // throw;
+                log.LogError($"Error sending Reply events to Event Hub: {ex.Message}");
             }
         }
 
-
         [FunctionName("GetUpdateEvents")]
-        public static async Task RunAsync([EventHubTrigger("RequestEventHubName", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
+        public  async Task RunAsync([EventHubTrigger("RequestEventHubName", Connection = "amdox-events-connection-setting")] EventData[] events, ILogger log)
         {
             var exceptions = new List<Exception>();
             var userList = new List<User>();
+          
 
-            foreach (var eventData in events)
+            try
             {
-                try
+                foreach (var eventData in events)
                 {
-                    string jsonString = Encoding.UTF8.GetString(eventData.Body.ToArray());
-                    var users = JsonConvert.DeserializeObject<User>(jsonString);
-                    userList.Add(users);
+                    try
+                    {
+                        string jsonString = Encoding.UTF8.GetString(eventData.Body.ToArray());
+                        var users = JsonConvert.DeserializeObject<User>(jsonString);
+                        userList.Add(users);
+                    }
+                    catch (Exception e)
+                    {
+                        exceptions.Add(e);
+                        log.LogError($"Error deserializing JSON data: {e.Message}");
+                    }
                 }
-                catch (Exception e)
+
+                foreach (var user in userList)
                 {
-                    exceptions.Add(e);
-                    log.LogError($"Error deserializing JSON data: {e.Message}");
+                    try
+                    {
+                        await ProcessUserAsync(user, log);
+                    }
+                    catch (Exception e)
+                    {
+                        exceptions.Add(e);
+                        log.LogError($"Error processing user: {e.Message}");
+                    }
                 }
             }
-
-            foreach (var user in userList)
+            catch (Exception ex)
             {
-                try
-                {
-                    await ProcessUserAsync(user, log);
-                }
-                catch (Exception e)
-                {
-                    exceptions.Add(e);
-                }
+                log.LogError($"Unhandled exception: {ex.Message}");
+                exceptions.Add(ex);
             }
 
-            if (exceptions.Count > 1)
+            foreach (var ex in exceptions)
+            {
+                log.LogError($"Exception occurred: {ex.Message}");
+            }
+
+            if (exceptions.Count > 0)
             {
                 throw new AggregateException(exceptions);
             }
-
-            if (exceptions.Count == 1)
-            {
-                throw exceptions[0];
-            }
         }
 
-        public static async Task ProcessUserAsync(User user, ILogger log)
+        public  async Task ProcessUserAsync(User user, ILogger log)
         {
             try
             {
@@ -112,22 +114,35 @@ namespace Amdox_EventTrigger
                 var json = JsonConvert.SerializeObject(user);
                 var content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                var response = await _httpClient.PostAsync(apiUrl, content);
+                HttpResponseMessage response;
+                try
+                {
+                    response = await _httpClient.PostAsync(apiUrl, content);
+                }
+                catch (HttpRequestException ex)
+                {
+                    log.LogError($"Error connecting to the API: {ex.Message}");
+                    return; // Exit the method if there's a network-related error
+                }
 
                 if (response.IsSuccessStatusCode)
                 {
-                    Console.WriteLine($"User data for {user.UserGuid} Updated successfully To AR database.\n");
+                    log.LogInformation($"User data for {user.UserGuid} Updated successfully To AR database.");
                     var jsonResponse = await response.Content.ReadAsStringAsync();
-                    await PostEventAsync(jsonResponse);
+                    await PostEventAsync(jsonResponse, log);
                 }
                 else
                 {
-                    Console.WriteLine($"Error uploading user data for {user.UserGuid}. Status code: {response.StatusCode}");
+                    log.LogError($"Error uploading user data for {user.UserGuid}. Status code: {response.StatusCode}");
                 }
+            }
+            catch (JsonException ex)
+            {
+                log.LogError($"Error serializing/deserializing JSON: {ex.Message}");
             }
             catch (Exception e)
             {
-                Console.WriteLine($"Error processing user data for {user.UserGuid}: {e.Message}");
+                log.LogError($"Error processing user data for {user.UserGuid}: {e.Message}");
             }
         }
     }
